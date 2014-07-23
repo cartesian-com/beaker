@@ -25,14 +25,36 @@ module Beaker
         @logger.debug("Creating image")
         image = ::Docker::Image.build(dockerfile_for(host), { :rm => true })
 
-        @logger.debug("Creating container from image #{image.id}")
-        container = ::Docker::Container.create({
+        create_args = {
           'Image' => image.id,
           'Hostname' => host.name,
-        })
+        }
+        start_args = {
+          "PublishAllPorts" => true,
+          "Privileged" => true,
+        }
+
+        if host.options[:HOSTS][host.name][:docker_mount_modules_dir] then
+          mount_dir = File.expand_path(File.join(Dir.getwd, '..'))  # i.e. one up from where the Rakefile is
+          @logger.debug("Mounting /etc/puppet/modules from Docker host O/S, #{mount_dir}")
+          create_args.merge!({
+            "Volumes" => {
+              "/etc/puppet/modules" => mount_dir
+            },
+            "VolumesRW" => {
+              "/etc/puppet/modules" => false
+            }
+          })
+          start_args.merge!({
+            "Binds" => ["#{mount_dir}:/etc/puppet/modules:ro"]
+          })
+        end
+
+        @logger.debug("Creating container from image #{image.id}")
+        container = ::Docker::Container.create(create_args)
 
         @logger.debug("Starting container #{container.id}")
-        container.start({"PublishAllPorts" => true, "Privileged" => true})
+        container.start(start_args)
 
         # Find out where the ssh port is from the container
         if ENV['DOCKER_HOST']

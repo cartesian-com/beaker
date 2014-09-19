@@ -34,8 +34,10 @@ module Beaker
           "Privileged" => true,
         }
 
-        if host.options[:HOSTS][host.name][:docker_mount_modules_dir] then
-          mount_dir = File.expand_path(File.join(Dir.getwd, '..'))  # i.e. one up from where the Rakefile is
+        docker_mount_dir = host.options[:HOSTS][host.name][:docker_mount_modules_dir]
+
+        if docker_mount_dir != "" then
+          mount_dir = File.expand_path(File.join(Dir.getwd, docker_mount_dir))
           @logger.debug("Mounting /etc/puppet/modules from Docker host O/S, #{mount_dir}")
           create_args.merge!({
             "Volumes" => {

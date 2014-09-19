@@ -2,7 +2,7 @@ if RUBY_VERSION < "1.9"
   require 'test/unit/assertions'
 else
   require 'minitest/autorun'
-fi
+end
 
 module Beaker
   module CommandFactory

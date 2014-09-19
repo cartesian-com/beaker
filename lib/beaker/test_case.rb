@@ -7,7 +7,12 @@ require 'benchmark'
 require 'stringio'
 require 'rbconfig'
 #include test/unit, but do not allow it to autorun on exit
-require 'test/unit'
+if RUBY_VERSION < "1.9"
+  require 'test/unit'
+else
+  require 'minitest/autorun'
+end
+
 if defined?(Test::Unit::AutoRunner.need_auto_run?)
   # For test-unit gem >= 2.4.9
   Test::Unit::AutoRunner.need_auto_run = false
@@ -17,6 +22,9 @@ elsif defined?(Test::Unit.run?)
 elsif defined?(Test::Unit::Runner)
   # For test/unit bundled in Ruby >= 1.9.3
   Test::Unit::Runner.module_eval("@@stop_auto_run = true")
+elsif defined?(Minitest)
+  # For Minitest 5, stop the at_exit hook running autorun
+  at_exit { exit! 0 }
 end
 
 module Beaker

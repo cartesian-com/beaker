@@ -1,8 +1,16 @@
-require 'test/unit/assertions'
+if RUBY_VERSION < "1.9"
+  require 'test/unit/assertions'
+else
+  require 'minitest/autorun'
+fi
 
 module Beaker
   module CommandFactory
-    include Test::Unit::Assertions
+    if defined?(Test::Unit::Assertions)
+      include Test::Unit::Assertions
+    else
+      include Minitest::Assertions
+    end
 
     def execute(command, options={}, &block)
       result = self.exec(Command.new(command), options)

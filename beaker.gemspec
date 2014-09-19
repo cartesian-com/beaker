@@ -33,6 +33,7 @@ Gem::Specification.new do |s|
 
   # Run time dependencies
   s.add_runtime_dependency 'json', '~> 1.8'
+  s.add_runtime_dependency 'hocon', '~> 0.0.4'
   s.add_runtime_dependency 'net-ssh', '~> 2.6'
   s.add_runtime_dependency 'net-scp', '~> 1.1'
   s.add_runtime_dependency 'inifile', '~> 2.0'
@@ -44,6 +45,7 @@ Gem::Specification.new do |s|
   s.add_runtime_dependency 'google-api-client', '~> 0.7.1'
   s.add_runtime_dependency 'aws-sdk', '1.42.0'
   s.add_runtime_dependency 'docker-api' unless RUBY_VERSION < '1.9'
+  s.add_runtime_dependency 'fog', '~> 1.22.1'
 
   # These are transitive dependencies that we include or pin to because...
   # Ruby 1.8 compatibility

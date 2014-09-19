@@ -137,6 +137,43 @@ module Beaker
       @options.is_pe?
     end
 
+    # True if this is a pe run, or if the host has had a 'use-service' property set.
+    def use_service_scripts?
+      is_pe? || self['use-service']
+    end
+
+    # Mirrors the true/false value of the host's 'graceful-restarts' property,
+    # or falls back to the value of +is_using_passenger?+ if
+    # 'graceful-restarts' is nil, but only if this is not a PE run (foss only).
+    def graceful_restarts?
+      graceful =
+      if !self['graceful-restarts'].nil?
+        self['graceful-restarts']
+      else
+        !is_pe? && is_using_passenger?
+      end
+      graceful
+    end
+
+    # Modifies the host settings to indicate that it will be using passenger service scripts,
+    # (apache2) by default.  Does nothing if this is a PE host, since it is already using
+    # passenger.
+    # @param [String] puppetservice Name of the service script that should be
+    #   called to stop/startPuppet on this host.  Defaults to 'apache2'.
+    def uses_passenger!(puppetservice = 'apache2')
+      if !is_pe?
+        self['passenger'] = true
+        self['puppetservice'] = puppetservice
+        self['use-service'] = true
+      end
+      return true
+    end
+
+    # True if this is a PE run, or if the host's 'passenger' property has been set.
+    def is_using_passenger?
+      is_pe? || self['passenger']
+    end
+
     def log_prefix
       if @defaults['vmhostname']
         "#{self} (#{@name})"
@@ -153,6 +190,18 @@ module Beaker
     #Return the ip address of this host
     def ip
       self[:ip] ||= get_ip
+    end
+
+    #Examine the host system to determine the architecture
+    #@return [Boolean] true if x86_64, false otherwise
+    def determine_if_x86_64
+      result = exec(Beaker::Command.new("arch | grep x86_64"), :acceptable_exit_codes => (0...127))
+      result.exit_code == 0
+    end
+
+    #@return [Boolean] true if x86_64, false otherwise
+    def is_x86_64?
+      @x86_64 ||= determine_if_x86_64
     end
 
     def connection
@@ -206,9 +255,77 @@ module Beaker
       end
     end
 
-    def do_scp_to source, target, options
+    # Create the provided directory structure on the host
+    # @param [String] dir The directory structure to create on the host
+    # @return [Boolean] True, if directory construction succeeded, otherwise False
+    def mkdir_p dir
+      result = exec(Beaker::Command.new("mkdir -p #{dir}"), :acceptable_exit_codes => [0, 1])
+      result.exit_code == 0
+    end
+
+    # scp files from the localhost to this test host, if a directory is provided it is recursively copied
+    # @param source [String] The path to the file/dir to upload
+    # @param target [String] The destination path on the host
+    # @param [Hash{Symbol=>String}] options Options to alter execution
+    # @option options [Array<String>] :ignore An array of file/dir paths that will not be copied to the host
+    def do_scp_to source, target, options = {}
       @logger.debug "localhost $ scp #{source} #{@name}:#{target}"
-      result = connection.scp_to(source, target, options, $dry_run)
+
+      result = Result.new(@name, [source, target])
+      has_ignore = options[:ignore] and not options[:ignore].empty?
+      # construct the regex for matching ignored files/dirs
+      ignore_re = nil
+      if has_ignore
+        ignore_arr = Array(options[:ignore]).map do |entry|
+          "((\/|\\A)#{entry}(\/|\\z))".sub(/\./, "\.")
+        end
+        ignore_re = Regexp.new(ignore_arr.join('|'))
+      end
+
+      # either a single file, or a directory with no ignores
+      if File.file?(source) or (File.directory?(source) and not has_ignore)
+        source_file = source
+        if has_ignore and (source =~ ignore_re)
+          @logger.debug "After rejecting ignored files/dirs, there is no file to copy"
+          source_file = nil
+          result.stdout = "No files to copy"
+          result.exit_code = 1
+        end
+        if source_file
+          result = connection.scp_to(source_file, target, options, $dry_run)
+        end
+      else # a directory with ignores
+        dir_source = Dir.glob("#{source}/**/*").reject do |f|
+          f =~ ignore_re
+        end
+        @logger.debug "After rejecting ignored files/dirs, going to scp [#{dir_source.join(", ")}]"
+
+        # create necessary directory structure on host
+        required_dirs = (dir_source.map{ | dir | File.dirname(dir) }).uniq
+        require 'pathname'
+        source_path = Pathname.new(source)
+        required_dirs.each do |dir|
+          dir_path = Pathname.new(dir)
+          if dir_path.absolute?
+            mkdir_p(File.join(target,dir_path.relative_path_from(source_path)))
+          else
+            mkdir_p( File.join(target, dir) )
+          end
+        end
+
+        # copy each file to the host
+        dir_source.each do |s|
+          s_path = Pathname.new(s)
+          if s_path.absolute?
+            file_path = File.join(target,s_path.relative_path_from(source_path))
+          else
+            file_path = File.join(target, s)
+          end
+          result = connection.scp_to(s, file_path, options, $dry_run)
+        end
+      end
+
+      @logger.debug result.stdout
       return result
     end
 
@@ -216,6 +333,7 @@ module Beaker
 
       @logger.debug "localhost $ scp #{@name}:#{source} #{target}"
       result = connection.scp_from(source, target, options, $dry_run)
+      @logger.debug result.stdout
       return result
     end
 

@@ -21,11 +21,12 @@ module Windows
         'group'         => 'Administrators',
         'puppetservice' => 'pe-httpd',
         'puppetpath'    => '`cygpath -smF 35`/PuppetLabs/puppet/etc',
+        'hieraconf'     => '`cygpath -smF 35`/Puppetlabs/puppet/etc/hiera.yaml',
         'puppetvardir'  => '`cygpath -smF 35`/PuppetLabs/puppet/var',
         'distmoduledir' => '`cygpath -smF 35`/PuppetLabs/puppet/etc/modules',
         'sitemoduledir' => 'C:/usr/share/puppet/modules',
-        #if an x86 Program Files dir exists then use it, default to just Program Files
-        'puppetbindir'  => '$( [ -d "/cygdrive/c/Program Files (x86)" ] && echo "/cygdrive/c/Program Files (x86)" || echo "/cygdrive/c/Program Files" )/Puppet Labs/Puppet Enterprise/bin',
+        #if an x86 Puppet Labs dir exists then use it, default to non-x86 Program Files directory
+        'puppetbindir'  => '$( [ -d "/cygdrive/c/Program Files (x86)/Puppet Labs/Puppet Enterprise/bin" ] && echo "/cygdrive/c/Program Files (x86)" || echo "/cygdrive/c/Program Files" )/Puppet Labs/Puppet Enterprise/bin',
         'pathseparator' => ';',
       })
     end
@@ -36,13 +37,14 @@ module Windows
         'user'              => 'Administrator',
         'group'             => 'Administrators',
         'puppetpath'        => '`cygpath -smF 35`/PuppetLabs/puppet/etc',
+        'hieraconf'         => '`cygpath -smF 35`/Puppetlabs/puppet/etc/hiera.yaml',
         'puppetvardir'      => '`cygpath -smF 35`/PuppetLabs/puppet/var',
         'distmoduledir'     => '`cygpath -smF 35`/PuppetLabs/puppet/etc/modules',
         'sitemoduledir'     => 'C:/usr/share/puppet/modules',
         'hieralibdir'       => '`cygpath -w /opt/puppet-git-repos/hiera/lib`',
         'hierapuppetlibdir' => '`cygpath -w /opt/puppet-git-repos/hiera-puppet/lib`',
         # PATH related variables need to be Unix, which cygwin converts
-        'puppetbindir'  => '$( [ -d "/cygdrive/c/Program Files (x86)" ] && echo "/cygdrive/c/Program Files (x86)" || echo "/cygdrive/c/Program Files" )/Puppet Labs/Puppet/bin',
+        'puppetbindir'  => '$( [ -d "/cygdrive/c/Program Files (x86)/Puppet Labs/Puppet/bin" ] && echo "/cygdrive/c/Program Files (x86)" || echo "/cygdrive/c/Program Files" )/Puppet Labs/Puppet/bin',
         'hierabindir'       => '/opt/puppet-git-repos/hiera/bin',
         'pathseparator'     => ';',
       })

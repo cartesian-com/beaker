@@ -49,6 +49,9 @@ module Beaker
       # Wait for each node to reach status :running
       wait_for_status(:running)
 
+      # Add metadata tags to each instance
+      add_tags()
+
       # Grab the ip addresses and dns from EC2 for each instance to use for ssh
       populate_dns()
 
@@ -85,29 +88,71 @@ module Beaker
       nil #void
     end
 
+    #Print instances to the logger.  Instances will be from all regions associated with provided key name and
+    #limited by regex compared to instance status.  Defaults to running instances.
+    #@param [String] key The key_name to match for
+    #@param [Regex] status The regular expression to match against the instance's status
+    def log_instances(key = key_name, status = /running/)
+      instances = []
+      @ec2.regions.each do |region|
+        @logger.debug "Reviewing: #{region.name}"
+        @ec2.regions[region.name].instances.each do |instance|
+          if (instance.key_name =~ /#{key}/) and (instance.status.to_s =~ status)
+            instances << instance
+          end
+        end
+      end
+      output = ""
+      instances.each do |instance|
+        output << "#{instance.id} keyname: #{instance.key_name}, dns name: #{instance.dns_name}, private ip: #{instance.private_ip_address}, ip: #{instance.ip_address}, launch time #{instance.launch_time}, status: #{instance.status}\n"
+      end
+      @logger.notify("aws-sdk: List instances (keyname: #{key})")
+      @logger.notify("#{output}")
+    end
+
     #Shutdown and destroy ec2 instances idenfitied by key that have been alive longer than ZOMBIE hours.
     #@param [Integer] max_age The age in hours that a machine needs to be older than to be considered a zombie
     #@param [String] key The key_name to match for
     def kill_zombies(max_age = ZOMBIE, key = key_name)
-      @logger.notify("aws-sdk: Kill Zombies!")
+      @logger.notify("aws-sdk: Kill Zombies! (keyname: #{key}, age: #{max_age} hrs)")
       #examine all available regions
+      kill_count = 0
+      volume_count = 0
+      time_now = Time.now.getgm #ec2 uses GM time
       @ec2.regions.each do |region|
         @logger.debug "Reviewing: #{region.name}"
         @ec2.regions[region.name].instances.each do |instance|
-          if (instance.key_name =~ /#{key}/) and (instance.launch_time + (ZOMBIE*60*60)) < Time.now and instance.status.to_s !~ /terminated/
-            @logger.debug "Kill! #{instance.id}: #{instance.key_name} (Current status: #{instance.status})"
-            instance.terminate()
+          if (instance.key_name =~ /#{key}/)
+            @logger.debug "Examining #{instance.id} (keyname: #{instance.key_name}, launch time: #{instance.launch_time}, status: #{instance.status})"
+            if ((time_now - instance.launch_time) >  max_age*60*60) and instance.status.to_s !~ /terminated/
+              @logger.debug "Kill! #{instance.id}: #{instance.key_name} (Current status: #{instance.status})"
+              begin
+                instance.terminate()
+                kill_count += 1
+              rescue AWS::EC2::Errors => e
+                @logger.debug "Failed to remove instance: #{instance.id}, #{e}"
+              end
+            end
           end
         end
         # Occasionaly, tearing down ec2 instances leaves orphaned EBS volumes behind -- these stack up quickly.
         # This simply looks for EBS volumes that are not in use
-        @ec2.regions[region.name].volumes.each do |vol|
-          if ( vol.status.to_s =~ /available/ )
-            @logger.debug "Tear down available volume: #{vol.id}"
-            vol.delete()
+        # Note: don't use volumes.each here as that funtion doesn't allow proper rescue from error states
+        volumes = @ec2.regions[region.name].volumes.map { |vol| vol.id }
+        volumes.each do |vol|
+          begin
+            vol = @ec2.regions[region.name].volumes[vol]
+            if ( vol.status.to_s =~ /available/ )
+              @logger.debug "Tear down available volume: #{vol.id}"
+              vol.delete()
+              volume_count += 1
+            end
+          rescue AWS::EC2::Errors::InvalidVolume::NotFound => e
+            @logger.debug "Failed to remove volume: #{vol.id}, #{e}"
           end
         end
       end
+      @logger.notify "#{key}: Killed #{kill_count} instance(s), freed #{volume_count} volume(s)"
 
     end
 
@@ -185,13 +230,6 @@ module Beaker
         # manipulated by 'cleanup' for example.
         host['instance'] = instance
 
-        # Define tags for the instance
-        @logger.notify("aws-sdk: Add tags")
-        instance.add_tag("jenkins_build_url", :value => @options[:jenkins_build_url])
-        instance.add_tag("Name", :value => host.name)
-        instance.add_tag("department", :value => @options[:department])
-        instance.add_tag("project", :value => @options[:project])
-
         @logger.notify("aws-sdk: Launched #{host.name} (#{amitype}:#{amisize}) using snapshot/image_type #{image_type}")
       end
 
@@ -216,33 +254,55 @@ module Beaker
         # exponential backoff for each poll.
         # TODO: should probably be a in a shared method somewhere
         for tries in 1..10
-          if instance.status == status
-            # Always sleep, so the next command won't cause a throttle
-            backoff_sleep(tries)
-            break
-          elsif tries == 10
-            raise "Instance never reached state #{status}"
+          begin
+            if instance.status == status
+              # Always sleep, so the next command won't cause a throttle
+              backoff_sleep(tries)
+              break
+            elsif tries == 10
+              raise "Instance never reached state #{status}"
+            end
+          rescue AWS::EC2::Errors::InvalidInstanceID::NotFound => e
+            @logger.debug("Instance #{name} not yet available (#{e})")
           end
           backoff_sleep(tries)
         end
 
-        # Set the IP to be the dns_name of the host, yes I know its not an IP.
-        host['ip'] = instance.dns_name
       end
     end
 
-    # Populate the hosts IP address and vmhostname entry from the EC2 dns_name
+    #Add metadata tags to all instances
+    #
+    # @return [void]
+    # @api private
+    def add_tags
+      @hosts.each do |host|
+        instance = host['instance']
+
+        # Define tags for the instance
+        @logger.notify("aws-sdk: Add tags for #{host.name}")
+        instance.add_tag("jenkins_build_url", :value => @options[:jenkins_build_url])
+        instance.add_tag("Name", :value => host.name)
+        instance.add_tag("department", :value => @options[:department])
+        instance.add_tag("project", :value => @options[:project])
+      end
+
+      nil
+    end
+
+    # Populate the hosts IP address from the EC2 dns_name
     #
     # @return [void]
     # @api private
     def populate_dns
       # Obtain the IP addresses and dns_name for each host
       @hosts.each do |host|
+        @logger.notify("aws-sdk: Populate DNS for #{host.name}")
         instance = host['instance']
-        host['vmhostname'] = instance.dns_name
         host['ip'] = instance.ip_address
         host['private_ip'] = instance.private_ip_address
-        @logger.notify("aws-sdk: name: #{host.name} vmhostname: #{host['vmhostname']} ip: #{host['ip']} private_ip: #{host['private_ip']}")
+        host['dns_name'] = instance.dns_name
+        @logger.notify("aws-sdk: name: #{host.name} ip: #{host['ip']} private_ip: #{host['private_ip']} dns_name: #{instance.dns_name}")
       end
 
       nil
@@ -253,10 +313,21 @@ module Beaker
     # @return [void]
     # @api private
     def configure_hosts
-      base = "127.0.0.1\tlocalhost localhost.localdomain\n"
       @hosts.each do |host|
-        hn = host.hostname
-        etc_hosts = base + "#{host['private_ip']}\t#{hn} #{hn.split(".")[0]}\n"
+        etc_hosts = "127.0.0.1\tlocalhost localhost.localdomain\n"
+        name = host.name
+        domain = get_domain_name(host)
+        ip = host['private_ip']
+        etc_hosts += "#{ip}\t#{name} #{name}.#{domain} #{host['dns_name']}\n"
+        @hosts.each do |neighbor|
+          if neighbor == host
+            next
+          end
+          name = neighbor.name
+          domain = get_domain_name(neighbor)
+          ip = neighbor['ip']
+          etc_hosts += "#{ip}\t#{name} #{name}.#{domain} #{neighbor['dns_name']}\n"
+        end
         set_etc_hosts(host, etc_hosts)
       end
     end
@@ -268,7 +339,7 @@ module Beaker
     # @api private
     def set_hostnames
       @hosts.each do |host|
-        host.exec(Command.new("hostname #{host['vmhostname']}"))
+        host.exec(Command.new("hostname #{host.name}"))
       end
     end
 
@@ -411,6 +482,9 @@ module Beaker
       creds = {}
       creds[:access_key] = default[:aws_access_key_id]
       creds[:secret_key] = default[:aws_secret_access_key]
+      raise "You must specify an aws_access_key_id in your .fog file (#{dot_fog}) for ec2 instances!" unless creds[:access_key]
+      raise "You must specify an aws_secret_access_key in your .fog file (#{dot_fog}) for ec2 instances!" unless creds[:secret_key]
+
       creds
     end
   end

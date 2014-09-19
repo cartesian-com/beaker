@@ -94,6 +94,7 @@ module Beaker
       @ssh.loop
 
       result.finalize!
+      @logger.last_result = result
       result
     end
 
@@ -165,14 +166,17 @@ module Beaker
     def scp_to source, target, options = {}, dry_run = false
       return if dry_run
 
-      options[:recursive]=File.directory?(source) if options[:recursive].nil?
-
-      @ssh.scp.upload! source, target, options
+      options[:recursive]  = File.directory?(source)
+      options[:chunk_size] = options[:chunk_size] || 16384
 
       result = Result.new(@hostname, [source, target])
+      result.stdout = "\n"
+      @ssh.scp.upload! source, target, options do |ch, name, sent, total|
+        result.stdout << "\tcopying %s: %10d/%d\n" % [name, sent, total]
+      end
 
       # Setting these values allows reporting via result.log(test_name)
-      result.stdout = "SCP'ed file #{source} to #{@hostname}:#{target}"
+      result.stdout << "  SCP'ed file #{source} to #{@hostname}:#{target}"
 
       # Net::Scp always returns 0, so just set the return code to 0.
       result.exit_code = 0
@@ -184,14 +188,17 @@ module Beaker
     def scp_from source, target, options = {}, dry_run = false
       return if dry_run
 
-      options[:recursive] = true if options[:recursive].nil?
-
-      @ssh.scp.download! source, target, options
+      options[:recursive] = true
+      options[:chunk_size] = options[:chunk_size] || 16384
 
       result = Result.new(@hostname, [source, target])
+      result.stdout = "\n"
+      @ssh.scp.download! source, target, options do |ch, name, sent, total|
+        result.stdout << "\tcopying %s: %10d/%d\n" % [name, sent, total]
+      end
 
       # Setting these values allows reporting via result.log(test_name)
-      result.stdout = "SCP'ed file #{@hostname}:#{source} to #{target}"
+      result.stdout << "  SCP'ed file #{@hostname}:#{source} to #{target}"
 
       # Net::Scp always returns 0, so just set the return code to 0.
       result.exit_code = 0

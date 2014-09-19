@@ -24,6 +24,86 @@ module Beaker
       expect( host['value'] ).to be === 'blarg'
     end
 
+    describe "host types" do
+      let(:options) { Beaker::Options::OptionsHash.new }
+
+      it "can be a pe host" do
+        options['type'] = 'pe'
+        expect(host.is_pe?).to be_true
+        expect(host.use_service_scripts?).to be_true
+        expect(host.is_using_passenger?).to be_true
+        expect(host.graceful_restarts?).to be_false
+      end
+
+      it "can be a foss-source host" do
+        expect(host.is_pe?).to be_false
+        expect(host.use_service_scripts?).to be_false
+        expect(host.is_using_passenger?).to be_false
+      end
+
+      it "can be a foss-package host" do
+        options['use-service'] = true
+        expect(host.is_pe?).to be_false
+        expect(host.use_service_scripts?).to be_true
+        expect(host.is_using_passenger?).to be_false
+        expect(host.graceful_restarts?).to be_false
+      end
+
+      it "can be a foss-packaged host using passenger" do
+        host.uses_passenger!
+        expect(host.is_pe?).to be_false
+        expect(host.use_service_scripts?).to be_true
+        expect(host.is_using_passenger?).to be_true
+        expect(host.graceful_restarts?).to be_true
+      end
+    end
+
+    describe "uses_passenger!" do
+      it "sets passenger property" do
+        host.uses_passenger!
+        expect(host['passenger']).to be_true
+        expect(host.is_using_passenger?).to be_true
+      end
+
+      it "sets puppetservice" do
+        host.uses_passenger!('servicescript')
+        expect(host['puppetservice']).to eq('servicescript')
+      end
+
+      it "sets puppetservice to apache2 by default" do
+        host.uses_passenger!
+        expect(host['puppetservice']).to eq('apache2')
+      end
+    end
+
+    describe "graceful_restarts?" do
+      it "is true if graceful-restarts property is set true" do
+        options['graceful-restarts'] = true
+        expect(host.graceful_restarts?).to be_true
+      end
+
+      it "is false if graceful-restarts property is set false" do
+        options['graceful-restarts'] = false
+        expect(host.graceful_restarts?).to be_false
+      end
+
+      it "is false if is_pe and graceful-restarts is nil" do
+        options['type'] = 'pe'
+        expect(host.graceful_restarts?).to be_false
+      end
+
+      it "is true if is_pe and graceful-restarts is true" do
+        options['type'] = 'pe'
+        options['graceful-restarts'] = true
+        expect(host.graceful_restarts?).to be_true
+      end
+
+      it "falls back to passenger property if not pe and graceful-restarts is nil" do
+        host.uses_passenger!
+        expect(host.graceful_restarts?).to be_true
+      end
+    end
+
     describe "windows hosts" do
       describe "install_package" do
         let(:cygwin) { 'setup-x86.exe' }
@@ -148,39 +228,183 @@ module Beaker
       end
     end
 
-    # it takes a location and a destination
-    # it basically proxies that to the connection object
-    it 'do_scp_to logs info and proxies to the connection' do
-      logger = host[:logger]
-      conn = double(:connection)
-      @options = { :logger => logger }
-      host.instance_variable_set :@connection, conn
-      args = [ 'source', 'target', {} ]
-      conn_args = args + [ nil ]
+    context 'do_scp_to' do
+      # it takes a location and a destination
+      # it basically proxies that to the connection object
+      it 'do_scp_to logs info and proxies to the connection' do
+        File.stub(:file?).and_return(true)
+        logger = host[:logger]
+        conn = double(:connection)
+        @options = { :logger => logger }
+        host.instance_variable_set :@connection, conn
+        args = [ 'source', 'target', {} ]
+        conn_args = args + [ nil ]
 
-      logger.should_receive(:debug)
-      conn.should_receive(:scp_to).with( *conn_args )
+        logger.should_receive(:debug)
+        conn.should_receive(:scp_to).with( *conn_args ).and_return(Beaker::Result.new(host, 'output!'))
 
-      host.do_scp_to *args
+        host.do_scp_to *args
+      end
+
+      context "using an ignore array with an absolute source path" do
+        source_path = '/repos/puppetlabs-inifile'
+        target_path = '/etc/puppetlabs/modules/inifile'
+        before :each do
+          test_dir = "#{source_path}/tests"
+          other_test_dir = "#{source_path}/tests2"
+
+          files = [
+              '00_EnvSetup.rb', '035_StopFirewall.rb', '05_HieraSetup.rb',
+              '01_TestSetup.rb', '03_PuppetMasterSanity.rb',
+              '06_InstallModules.rb','02_PuppetUserAndGroup.rb',
+              '04_ValidateSignCert.rb', '07_InstallCACerts.rb'              ]
+
+          @fileset1 = files.shuffle.map {|file| test_dir + '/' + file }
+          @fileset2 = files.shuffle.map {|file| other_test_dir + '/' + file }
+
+          create_files( @fileset1 )
+          create_files( @fileset2 )
+        end
+        it 'can take an ignore list that excludes all files and not call scp_to', :use_fakefs => true do
+          logger = host[:logger]
+          conn = double(:connection)
+          @options = { :logger => logger }
+          host.instance_variable_set :@connection, conn
+          args = [ source_path, target_path, {:ignore => ['tests', 'tests2']} ]
+
+          logger.should_receive(:debug)
+          host.should_receive( :mkdir_p ).exactly(0).times
+          conn.should_receive(:scp_to).exactly(0).times
+
+          host.do_scp_to *args
+        end
+        it 'can take an ignore list that excludes a single file and scp the rest', :use_fakefs => true do
+          exclude_file = '07_InstallCACerts.rb'
+          logger = host[:logger]
+          conn = double(:connection)
+          @options = { :logger => logger }
+          host.instance_variable_set :@connection, conn
+          args = [ source_path, target_path, {:ignore => [exclude_file]} ]
+
+          Dir.stub( :glob ).and_return( @fileset1 + @fileset2 )
+
+          logger.should_receive(:debug)
+          host.should_receive( :mkdir_p ).with("#{target_path}/tests")
+          host.should_receive( :mkdir_p ).with("#{target_path}/tests2")
+          (@fileset1 + @fileset2).each do |file|
+            if file !~ /#{exclude_file}/
+              file_args = [ file, File.join(target_path, file.gsub(source_path,'')), {:ignore => [exclude_file]} ]
+              conn_args = file_args + [ nil ]
+              conn.should_receive(:scp_to).with( *conn_args ).and_return(Beaker::Result.new(host, 'output!'))
+            else
+              file_args = [ file, File.join(target_path, file.gsub(source_path,'')), {:ignore => [exclude_file]} ]
+              conn_args = file_args + [ nil ]
+              conn.should_not_receive(:scp_to).with( *conn_args )
+            end
+          end
+
+          host.do_scp_to *args
+        end
+      end
+      context "using an ignore array" do
+
+        before :each do
+          test_dir = 'tmp/tests'
+          other_test_dir = 'tmp/tests2'
+
+          files = [
+            '00_EnvSetup.rb', '035_StopFirewall.rb', '05_HieraSetup.rb',
+            '01_TestSetup.rb', '03_PuppetMasterSanity.rb',
+            '06_InstallModules.rb','02_PuppetUserAndGroup.rb',
+            '04_ValidateSignCert.rb', '07_InstallCACerts.rb'              ]
+
+          @fileset1 = files.shuffle.map {|file| test_dir + '/' + file }
+          @fileset2 = files.shuffle.map {|file| other_test_dir + '/' + file }
+
+          create_files( @fileset1 )
+          create_files( @fileset2 )
+        end
+
+        it 'can take an ignore list that excludes all files and not call scp_to', :use_fakefs => true do
+          logger = host[:logger]
+          conn = double(:connection)
+          @options = { :logger => logger }
+          host.instance_variable_set :@connection, conn
+          args = [ 'tmp', 'target', {:ignore => ['tests', 'tests2']} ]
+
+          logger.should_receive(:debug)
+          host.should_receive( :mkdir_p ).exactly(0).times
+          conn.should_receive(:scp_to).exactly(0).times
+
+          host.do_scp_to *args
+        end
+
+        it 'can take an ignore list that excludes a single file and scp the rest', :use_fakefs => true do
+          exclude_file = '07_InstallCACerts.rb'
+          logger = host[:logger]
+          conn = double(:connection)
+          @options = { :logger => logger }
+          host.instance_variable_set :@connection, conn
+          args = [ 'tmp', 'target', {:ignore => [exclude_file]} ]
+
+          Dir.stub( :glob ).and_return( @fileset1 + @fileset2 )
+
+          logger.should_receive(:debug)
+          host.should_receive( :mkdir_p ).with('target/tmp/tests')
+          host.should_receive( :mkdir_p ).with('target/tmp/tests2')
+          (@fileset1 + @fileset2).each do |file|
+            if file !~ /#{exclude_file}/
+              file_args = [ file, File.join('target', file), {:ignore => [exclude_file]} ]
+              conn_args = file_args + [ nil ]
+              conn.should_receive(:scp_to).with( *conn_args ).and_return(Beaker::Result.new(host, 'output!'))
+            end
+          end
+
+          host.do_scp_to *args
+        end
+
+        it 'can take an ignore list that excludes a dir and scp the rest', :use_fakefs => true do
+          exclude_file = 'tests'
+          logger = host[:logger]
+          conn = double(:connection)
+          @options = { :logger => logger }
+          host.instance_variable_set :@connection, conn
+          args = [ 'tmp', 'target', {:ignore => [exclude_file]} ]
+
+          Dir.stub( :glob ).and_return( @fileset1 + @fileset2 )
+
+          logger.should_receive(:debug)
+          host.should_receive( :mkdir_p ).with('target/tmp/tests2')
+          (@fileset2).each do |file|
+            file_args = [ file, File.join('target', file), {:ignore => [exclude_file]} ]
+            conn_args = file_args + [ nil ]
+            conn.should_receive(:scp_to).with( *conn_args ).and_return(Beaker::Result.new(host, 'output!'))
+          end
+
+          host.do_scp_to *args
+        end
+      end
     end
 
-    it 'do_scp_from logs info and proxies to the connection' do
-      logger = host[:logger]
-      conn = double(:connection)
-      @options = { :logger => logger }
-      host.instance_variable_set :@connection, conn
-      args = [ 'source', 'target', {} ]
-      conn_args = args + [ nil ]
+    context 'do_scp_from' do
+      it 'do_scp_from logs info and proxies to the connection' do
+        logger = host[:logger]
+        conn = double(:connection)
+        @options = { :logger => logger }
+        host.instance_variable_set :@connection, conn
+        args = [ 'source', 'target', {} ]
+        conn_args = args + [ nil ]
 
-      logger.should_receive(:debug)
-      conn.should_receive(:scp_from).with( *conn_args )
+        logger.should_receive(:debug)
+        conn.should_receive(:scp_from).with( *conn_args ).and_return(Beaker::Result.new(host, 'output!'))
 
-      host.do_scp_from *args
+        host.do_scp_from *args
+      end
     end
+
     it 'interpolates to its "name"' do
       expect( "#{host}" ).to be === 'name'
     end
-
 
     context 'merging defaults' do
       it 'knows the difference between foss and pe' do

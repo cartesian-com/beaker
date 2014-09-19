@@ -4,6 +4,7 @@ class ClassMixedWithDSLHelpers
   include Beaker::DSL::Helpers
   include Beaker::DSL::Wrappers
   include Beaker::DSL::Roles
+  include Beaker::DSL::Patterns
 
   def logger
     @logger ||= RSpec::Mocks::Mock.new('logger').as_null_object
@@ -32,6 +33,7 @@ describe ClassMixedWithDSLHelpers do
     end
 
     it 'allows the environment the command is run within to be specified' do
+      subject.stub( :hosts ).and_return( hosts )
 
       Beaker::Command.should_receive( :new ).
         with( 'ls ~/.bin', [], {'ENV' => { :HOME => '/tmp/test_home' }} )
@@ -58,6 +60,7 @@ describe ClassMixedWithDSLHelpers do
     end
 
     it 'delegates to itself for each host passed' do
+      subject.stub( :hosts ).and_return( hosts )
       expected = []
       hosts.each_with_index do |host, i|
         expected << i
@@ -70,6 +73,7 @@ describe ClassMixedWithDSLHelpers do
 
     context 'upon command completion' do
       before :each do
+        subject.stub( :hosts ).and_return( hosts )
         host.should_receive( :exec ).and_return( result )
         @res = subject.on( host, command )
       end
@@ -93,6 +97,7 @@ describe ClassMixedWithDSLHelpers do
 
     context 'when passed a block with arity of 1' do
       before :each do
+        subject.stub( :hosts ).and_return( hosts )
         host.should_receive( :exec ).and_return( result )
       end
 
@@ -124,6 +129,7 @@ describe ClassMixedWithDSLHelpers do
 
     context 'when passed a block with arity of 0' do
       before :each do
+        subject.stub( :hosts ).and_return( hosts )
         host.should_receive( :exec ).and_return( result )
       end
 
@@ -167,6 +173,7 @@ describe ClassMixedWithDSLHelpers do
 
   describe '#scp_from' do
     it 'delegates to the host' do
+      subject.stub( :hosts ).and_return( hosts )
       subject.should_receive( :logger ).exactly( hosts.length ).times
       result.should_receive( :log ).exactly( hosts.length ).times
 
@@ -180,6 +187,7 @@ describe ClassMixedWithDSLHelpers do
 
   describe '#scp_to' do
     it 'delegates to the host' do
+      subject.stub( :hosts ).and_return( hosts )
       subject.should_receive( :logger ).exactly( hosts.length ).times
       result.should_receive( :log ).exactly( hosts.length ).times
 
@@ -296,25 +304,6 @@ describe ClassMixedWithDSLHelpers do
     end
   end
 
-  describe '#puppet_module_install_on' do
-    it 'scps the module to the module dir' do
-      subject.stub( :hosts ).and_return( hosts )
-
-      subject.should_receive( :puppet ).with('module install test' ).once
-      subject.puppet_module_install_on( master, {:source => '/module', :module_name => 'test'} )
-    end
-  end
-
-  describe '#puppet_module_install' do
-    it 'delegates to #puppet_module_install_on with the hosts list' do
-      subject.stub( :hosts ).and_return( hosts )
-
-      subject.should_receive( :puppet_module_install_on ).with( hosts, {:source => '/module', :module_name => 'test'}).once
-
-      subject.puppet_module_install( {:source => '/module', :module_name => 'test'} )
-    end
-  end
-
   describe 'confine' do
     let(:logger) { double.as_null_object }
     before do
@@ -384,8 +373,46 @@ describe ClassMixedWithDSLHelpers do
     end
   end
 
+  describe '#select_hosts' do
+    let(:logger) { double.as_null_object }
+    before do
+      subject.stub( :logger ).and_return( logger )
+    end
+
+    it 'it returns an empty array if there are no applicable hosts' do
+      hosts = [ {'thing' => 'foo'}, {'thing' => 'bar'} ]
+
+      expect(subject.select_hosts( {'thing' => 'nope'}, hosts )).to be == []
+    end
+
+    it 'selects hosts that match a list of criteria' do
+      hosts = [ {'thing' => 'foo'}, {'thing' => 'bar'}, {'thing' => 'baz'} ]
+
+      expect(subject.select_hosts( {:thing => ['foo', 'baz']}, hosts )).to be == [ {'thing' => 'foo'}, {'thing' => 'baz'} ]
+    end
+
+    it 'selects hosts when a passed block returns true' do
+      host1 = {'platform' => 'solaris1'}
+      host2 = {'platform' => 'solaris2'}
+      host3 = {'platform' => 'windows'}
+      ret1 = (Struct.new('Result1', :stdout)).new(':global')
+      ret2 = (Struct.new('Result2', :stdout)).new('a_zone')
+      hosts = [ host1, host2, host3 ]
+      subject.should_receive( :hosts ).and_return( hosts )
+
+      subject.should_receive( :on ).with( host1, '/sbin/zonename' ).once.and_return( ret1 )
+      subject.should_receive( :on ).with( host2, '/sbin/zonename' ).once.and_return( ret2 )
+
+      selected_hosts = subject.select_hosts 'platform' => 'solaris' do |host|
+                             subject.on(host, '/sbin/zonename').stdout =~ /:global/
+      end
+      expect( selected_hosts ).to be == [ host1 ]
+    end
+  end
+
   describe '#apply_manifest_on' do
     it 'calls puppet' do
+      subject.stub( :hosts ).and_return( hosts )
       subject.should_receive( :create_remote_file ).and_return( true )
       subject.should_receive( :puppet ).
       #  with( 'apply', '--verbose', 'agent' ).
@@ -399,6 +426,7 @@ describe ClassMixedWithDSLHelpers do
     end
 
     it 'operates on an array of hosts' do
+      subject.stub( :hosts ).and_return( hosts )
       the_hosts = [master, agent]
 
       subject.should_receive( :create_remote_file ).twice.and_return( true )
@@ -415,6 +443,7 @@ describe ClassMixedWithDSLHelpers do
     end
 
     it 'adds acceptable exit codes with :catch_failures' do
+      subject.stub( :hosts ).and_return( hosts )
       subject.should_receive( :create_remote_file ).and_return( true )
       subject.should_receive( :puppet ).
         and_return( 'puppet_command' )
@@ -428,6 +457,7 @@ describe ClassMixedWithDSLHelpers do
                                 :catch_failures => true )
     end
     it 'allows acceptable exit codes through :catch_failures' do
+      subject.stub( :hosts ).and_return( hosts )
       subject.should_receive( :create_remote_file ).and_return( true )
       subject.should_receive( :puppet ).
         and_return( 'puppet_command' )
@@ -442,6 +472,7 @@ describe ClassMixedWithDSLHelpers do
                                 :catch_failures => true )
     end
     it 'enforces a 0 exit code through :catch_changes' do
+      subject.stub( :hosts ).and_return( hosts )
       subject.should_receive( :create_remote_file ).and_return( true )
       subject.should_receive( :puppet ).
         and_return( 'puppet_command' )
@@ -459,6 +490,7 @@ describe ClassMixedWithDSLHelpers do
       )
     end
     it 'enforces a 2 exit code through :expect_changes' do
+      subject.stub( :hosts ).and_return( hosts )
       subject.should_receive( :create_remote_file ).and_return( true )
       subject.should_receive( :puppet ).
         and_return( 'puppet_command' )
@@ -476,6 +508,7 @@ describe ClassMixedWithDSLHelpers do
       )
     end
     it 'enforces exit codes through :expect_failures' do
+      subject.stub( :hosts ).and_return( hosts )
       subject.should_receive( :create_remote_file ).and_return( true )
       subject.should_receive( :puppet ).
         and_return( 'puppet_command' )
@@ -493,6 +526,7 @@ describe ClassMixedWithDSLHelpers do
       )
     end
     it 'enforces exit codes through :expect_failures' do
+      subject.stub( :hosts ).and_return( hosts )
       expect {
         subject.apply_manifest_on(
           agent,
@@ -503,6 +537,7 @@ describe ClassMixedWithDSLHelpers do
       }.to raise_error ArgumentError, /catch_failures.+expect_failures/
     end
     it 'enforces added exit codes through :expect_failures' do
+      subject.stub( :hosts ).and_return( hosts )
       subject.should_receive( :create_remote_file ).and_return( true )
       subject.should_receive( :puppet ).
         and_return( 'puppet_command' )
@@ -522,6 +557,7 @@ describe ClassMixedWithDSLHelpers do
     end
 
     it 'can set the --parser future flag' do
+      subject.stub( :hosts ).and_return( hosts )
       subject.should_receive( :create_remote_file ).and_return( true )
 
       expect( subject ).to receive( :on ).with {|h, command, opts|
@@ -543,6 +579,7 @@ describe ClassMixedWithDSLHelpers do
     end
 
     it 'can set the --noops flag' do
+      subject.stub( :hosts ).and_return( hosts )
       subject.should_receive( :create_remote_file ).and_return( true )
       expect( subject ).to receive( :on ).with {|h, command, opts|
         cmdline = command.cmd_line( h )
@@ -575,6 +612,7 @@ describe ClassMixedWithDSLHelpers do
 
   describe '#stub_hosts_on' do
     it 'executes puppet on the host passed and ensures it is reverted' do
+      subject.stub( :hosts ).and_return( hosts )
       logger = double.as_null_object
 
       subject.stub( :logger ).and_return( logger )
@@ -589,7 +627,7 @@ describe ClassMixedWithDSLHelpers do
               'puppetlabs.com',
               'ensure=absent' )
 
-      subject.stub_hosts_on( 'my_host', 'puppetlabs.com' => '127.0.0.1' )
+      subject.stub_hosts_on( make_host('my_host', {}), 'puppetlabs.com' => '127.0.0.1' )
     end
   end
 
@@ -606,15 +644,16 @@ describe ClassMixedWithDSLHelpers do
 
   describe '#stub_forge_on' do
     it 'stubs forge.puppetlabs.com with the value of `forge`' do
-      subject.stub( :options ).and_return( {} )
+      subject.stub( :hosts ).and_return( hosts )
+      host = make_host('my_host', {})
       Resolv.should_receive( :getaddress ).
         with( 'my_forge.example.com' ).and_return( '127.0.0.1' )
       subject.should_receive( :stub_hosts_on ).
-        with( 'my_host', 'forge.puppetlabs.com' => '127.0.0.1' )
+        with( host, 'forge.puppetlabs.com' => '127.0.0.1' )
       subject.should_receive( :stub_hosts_on ).
-        with( 'my_host', 'forgeapi.puppetlabs.com' => '127.0.0.1' )
+        with( host, 'forgeapi.puppetlabs.com' => '127.0.0.1' )
 
-      subject.stub_forge_on( 'my_host', 'my_forge.example.com' )
+      subject.stub_forge_on( host, 'my_forge.example.com' )
     end
   end
 
@@ -675,6 +714,7 @@ describe ClassMixedWithDSLHelpers do
       deb_agent = make_host( 'deb', :platform => 'debian-7-amd64' )
       deb_agent.stub( :puppet ).and_return( { 'vardir' => vardir } )
 
+      subject.stub( :hosts ).and_return( hosts )
       subject.should_receive( :on ).with( deb_agent, "[ -e '#{vardir}/state/agent_catalog_run.lock' ]", :acceptable_exit_codes => [0,1] ).once.and_return( result_fail )
       subject.should_receive( :on ).with( deb_agent, "[ -e /etc/init.d/pe-puppet-agent ]", :acceptable_exit_codes => [0,1] ).once.and_return( result_fail )
       subject.should_receive( :puppet_resource ).with( "service", "pe-puppet", "ensure=stopped").once
@@ -689,6 +729,7 @@ describe ClassMixedWithDSLHelpers do
       el_agent = make_host( 'el', :platform => 'el-5-x86_64' )
       el_agent.stub( :puppet ).and_return( { 'vardir' => vardir } )
 
+      subject.stub( :hosts ).and_return( hosts )
       subject.should_receive( :on ).with( el_agent, "[ -e '#{vardir}/state/agent_catalog_run.lock' ]", :acceptable_exit_codes => [0,1] ).once.and_return( result_fail )
       subject.should_receive( :on ).with( el_agent, "[ -e /etc/init.d/pe-puppet-agent ]", :acceptable_exit_codes => [0,1] ).once.and_return( result_pass )
       subject.should_receive( :puppet_resource ).with("service", "pe-puppet-agent", "ensure=stopped").once
@@ -760,16 +801,14 @@ describe ClassMixedWithDSLHelpers do
   describe '#with_puppet_running_on' do
     let(:test_case_path) { 'testcase/path' }
     let(:tmpdir_path) { '/tmp/tmpdir' }
-    let(:puppet_path) { '/puppet/path' }
-    let(:puppetservice) { nil }
     let(:is_pe) { false }
+    let(:use_service) { false }
+    let(:platform) { 'redhat' }
     let(:host) do
-      FakeHost.new(:pe => is_pe,
-                   :options => {
-        'puppetpath' => puppet_path,
-        'puppetservice' => puppetservice,
-        'platform' => 'el'
-      })
+      FakeHost.create('fakevm', "#{platform}-version-arch",
+        'type' => is_pe ? 'pe': 'git',
+        'use-service' => use_service
+      )
     end
 
     def stub_host_and_subject_to_allow_the_default_testdir_argument_to_be_created
@@ -795,35 +834,150 @@ describe ClassMixedWithDSLHelpers do
       }.to raise_error(RuntimeError, /puppet conf backup failed/)
     end
 
+    describe 'with puppet-server' do
+      let(:default_confdir) { "/etc/puppet" }
+      let(:default_vardir) { "/var/lib/puppet" }
+
+      let(:custom_confdir) { "/tmp/etc/puppet" }
+      let(:custom_vardir) { "/tmp/var/lib/puppet" }
+
+      let(:command_line_args) {"--vardir=#{custom_vardir} --confdir=#{custom_confdir}"}
+      let(:conf_opts) { {:__commandline_args__ => command_line_args,
+                         :is_puppetserver => true}}
+
+      let(:default_puppetserver_opts) {{ "jruby-puppet" => {
+        "master-conf-dir" => default_confdir,
+        "master-var-dir" => default_vardir,
+      }}}
+
+      let(:custom_puppetserver_opts) {{ "jruby-puppet" => {
+        "master-conf-dir" => custom_confdir,
+        "master-var-dir" => custom_vardir,
+      }}}
+
+      let(:puppetserver_conf) { "/etc/puppetserver/conf.d/puppetserver.conf" }
+      let(:logger) { double }
+
+      def stub_post_setup
+        subject.stub( :restore_puppet_conf_from_backup)
+        subject.stub( :bounce_service)
+        subject.stub( :stop_puppet_from_source_on)
+        subject.stub( :dump_puppet_log)
+        subject.stub( :restore_puppet_conf_from_backup)
+        subject.stub( :puppet_master_started)
+        subject.stub( :start_puppet_from_source_on!)
+        subject.stub( :lay_down_new_puppet_conf)
+        subject.stub( :logger) .and_return( logger )
+        logger.stub( :error)
+        logger.stub( :debug)
+      end
+
+      before do
+        stub_post_setup
+        subject.stub( :options) .and_return( {:is_puppetserver => true})
+        subject.stub( :modify_tk_config)
+        host.stub(:puppet).with('master') .and_return({'confdir' => default_confdir,
+                                                       'vardir' => default_vardir})
+      end
+
+      describe 'and command line args passed' do
+        it 'modifies SUT trapperkeeper configuration w/ command line args' do
+          subject.should_receive( :modify_tk_config).with(host, puppetserver_conf,
+                                                          custom_puppetserver_opts)
+          subject.with_puppet_running_on(host, conf_opts)
+        end
+      end
+
+      describe 'and no command line args passed' do
+        let(:command_line_args) { nil }
+        it 'modifies SUT trapperkeeper configuration w/ puppet defaults' do
+          subject.should_receive( :modify_tk_config).with(host, puppetserver_conf,
+                                                          default_puppetserver_opts)
+          subject.with_puppet_running_on(host, conf_opts)
+        end
+      end
+    end
+
     describe "with valid arguments" do
       before do
         Tempfile.should_receive(:open).with('beaker')
       end
 
-      context 'with puppetservice and service-path defined' do
-        let(:puppetservice) { 'whatever' }
+      context 'for pe hosts' do
+        let(:is_pe) { true }
+        let(:service_restart) { true }
 
         it 'bounces puppet twice' do
           subject.with_puppet_running_on(host, {})
-          expect(host).to execute_commands_matching(/puppet resource service #{puppetservice} ensure=stopped/).exactly(2).times
-          expect(host).to execute_commands_matching(/puppet resource service #{puppetservice} ensure=running/).exactly(2).times
+          expect(host).to execute_commands_matching(/puppet resource service #{host['puppetservice']}.*ensure=running/).exactly(2).times
+          expect(host).to execute_commands_matching(/puppet resource service #{host['puppetservice']}.*ensure=stopped/).exactly(2).times
         end
 
-        it 'yield to a block after bouncing service' do
+        it 'yields to a block after bouncing service' do
           execution = 0
+          subject.stub(:curl_with_retries)
           expect do
             subject.with_puppet_running_on(host, {}) do
-              expect(host).to execute_commands_matching(/puppet resource service #{puppetservice} ensure=stopped/).once
-              expect(host).to execute_commands_matching(/puppet resource service #{puppetservice} ensure=running/).once
+              expect(host).to execute_commands_matching(/puppet resource service #{host['puppetservice']}.*ensure=running/).exactly(1).times
+              expect(host).to execute_commands_matching(/puppet resource service #{host['puppetservice']}.*ensure=stopped/).exactly(1).times
               execution += 1
             end
           end.to change { execution }.by(1)
-          expect(host).to execute_commands_matching(/puppet resource service #{puppetservice} ensure=stopped/).exactly(2).times
-          expect(host).to execute_commands_matching(/puppet resource service #{puppetservice} ensure=running/).exactly(2).times
+          expect(host).to execute_commands_matching(/puppet resource service #{host['puppetservice']}.*ensure=running/).exactly(2).times
+          expect(host).to execute_commands_matching(/puppet resource service #{host['puppetservice']}.*ensure=stopped/).exactly(2).times
+        end
+      end
+
+      context 'for foss packaged hosts using passenger' do
+        before(:each) do
+          host.uses_passenger!
+        end
+
+        it 'bounces puppet twice' do
+          subject.stub(:curl_with_retries)
+          subject.with_puppet_running_on(host, {})
+          expect(host).to execute_commands_matching(/apache2ctl graceful/).exactly(2).times
+        end
+
+        it 'yields to a block after bouncing service' do
+          execution = 0
+          subject.stub(:curl_with_retries)
+          expect do
+            subject.with_puppet_running_on(host, {}) do
+              expect(host).to execute_commands_matching(/apache2ctl graceful/).once
+              execution += 1
+            end
+          end.to change { execution }.by(1)
+          expect(host).to execute_commands_matching(/apache2ctl graceful/).exactly(2).times
+        end
+      end
+
+      context 'for foss packaged hosts using webrick' do
+        let(:use_service) { true }
+
+        it 'stops and starts master using service scripts' do
+          subject.stub(:curl_with_retries)
+          subject.with_puppet_running_on(host, {})
+          expect(host).to execute_commands_matching(/puppet resource service #{host['puppetservice']}.*ensure=running/).exactly(2).times
+          expect(host).to execute_commands_matching(/puppet resource service #{host['puppetservice']}.*ensure=stopped/).exactly(2).times
+        end
+
+        it 'yields to a block after stopping and starting service' do
+          execution = 0
+          expect do
+            subject.with_puppet_running_on(host, {}) do
+              expect(host).to execute_commands_matching(/puppet resource service #{host['puppetservice']}.*ensure=running/).once
+              expect(host).to execute_commands_matching(/puppet resource service #{host['puppetservice']}.*ensure=stopped/).once
+              execution += 1
+            end
+          end.to change { execution }.by(1)
+          expect(host).to execute_commands_matching(/puppet resource service #{host['puppetservice']}.*ensure=running/).exactly(2).times
+          expect(host).to execute_commands_matching(/puppet resource service #{host['puppetservice']}.*ensure=stopped/).exactly(2).times
         end
       end
 
       context 'running from source' do
+        let('use-service') { false }
 
         it 'does not try to stop if not started' do
           subject.should_receive(:start_puppet_from_source_on!).and_return false
@@ -867,12 +1021,12 @@ describe ClassMixedWithDSLHelpers do
       end
 
       describe 'backup and restore of puppet.conf' do
-        let(:original_location) { "#{puppet_path}/puppet.conf" }
+        let(:original_location) { "#{host['puppetpath']}/puppet.conf" }
         let(:backup_location) { "#{tmpdir_path}/puppet.conf.bak" }
         let(:new_location) { "#{tmpdir_path}/puppet.conf" }
 
         context 'when a puppetservice is used' do
-          let(:puppetservice) { 'whatever' }
+          let(:use_service) { true }
 
           it 'backs up puppet.conf' do
             subject.with_puppet_running_on(host, {})
@@ -972,11 +1126,24 @@ describe ClassMixedWithDSLHelpers do
   end
 
   describe '#fact_on' do
-    it 'retreives a fact on host(s)' do
+    it 'retrieves a fact on a single host' do
+      result.stdout = "family\n"
       subject.should_receive(:facter).with('osfamily',{}).once
       subject.should_receive(:on).and_return(result)
 
-      subject.fact_on('host','osfamily')
+      expect( subject.fact_on('host','osfamily') ).to be === result.stdout.chomp
+    end
+
+    it 'retrieves an array of facts from multiple hosts' do
+      subject.stub( :hosts ).and_return( hosts )
+      times = hosts.length
+      result.stdout = "family\n"
+      hosts.each do |host|
+        host.should_receive(:exec).and_return(result)
+      end
+
+      expect( subject.fact_on(hosts,'osfamily') ).to be === [result.stdout.chomp] * hosts.length
+
     end
   end
 
@@ -989,105 +1156,57 @@ describe ClassMixedWithDSLHelpers do
     end
   end
 
+  describe 'modify_tk_config' do
+    let(:host) { double.as_null_object }
+    let(:config_file_path) { 'existing-file-path'}
+    let(:invalid_config_file_path) { 'nonexisting-file-path'}
+    let(:options_hash) { {:key => 'value'} }
+    let(:replace) { true }
 
-  describe 'copy_module_to' do
-    let(:ignore_list){%w(.git .idea .vagrant .vendor acceptance spec tests log . ..)}
-    let(:source){'./'}
-    let(:target){'/etc/puppetlabs/puppet/modules/testmodule'}
-    let(:module_parse_name){'testmodule'}
+    shared_examples 'modify-tk-config-without-error' do
+      it 'dumps to the SUT config file path' do
+        JSON.stub(:dump)
+        subject.stub(:create_remote_file).with(host, config_file_path, anything())
+        subject.modify_tk_config(host, config_file_path, options_hash, replace)
+      end
+    end
 
-    shared_examples 'copy_module_to' do  |opts|
-      it{
-        host = double("host")
-        host.stub(:[]).with('distmoduledir').and_return('/etc/puppetlabs/puppet/modules')
-        Dir.stub(:getpwd).and_return(source)
+    before do
+      host.stub(:file_exist?).with(invalid_config_file_path).and_return(false)
+      host.stub(:file_exist?).with(config_file_path).and_return(true)
+    end
 
-        subject.stub(:parse_for_moduleroot).and_return(source)
-        if module_parse_name
-          subject.stub(:parse_for_modulename).with(any_args()).and_return(module_parse_name)
-        else
-          subject.should_not_receive(:parse_for_modulename)
+    describe 'if file does not exist on SUT' do
+      it 'raises Runtime error' do
+        expect do
+          subject.modify_tk_config(host, invalid_config_file_path, options_hash)
+        end.to raise_error(RuntimeError, /.* does not exist on .*/)
+      end
+    end
+
+    describe 'given an empty options hash' do
+      it 'returns nil' do
+        expect(subject.modify_tk_config(host, 'blahblah', {})).to eq(nil)
+      end
+    end
+
+    describe 'given a non-empty options hash' do
+
+      describe 'given a false value to its `replace` parameter' do
+        let(:replace) { false }
+        before do
+          subject.should_receive(:read_tk_config_string).with(anything())
         end
+        include_examples('modify-tk-config-without-error')
+      end
 
-        File.stub(:exists?).with(any_args()).and_return(false)
-        File.stub(:directory?).with(any_args()).and_return(false)
-
-        subject.should_receive(:scp_to).with(host,source, target, {:ignore => ignore_list})
-        if opts.nil?
-          subject.copy_module_to(host)
-        else
-          subject.copy_module_to(host,opts)
+      describe 'given a true value to its `replace` parameter' do
+        before do
+          JSON.should_receive(:dump)
+          subject.should_receive(:create_remote_file).with(host, config_file_path, anything())
         end
-      }
+        include_examples('modify-tk-config-without-error')
+      end
     end
-    describe 'should call scp with the correct info, with only providing host' do
-      let(:target){'/etc/puppetlabs/puppet/modules/testmodule'}
-
-      it_should_behave_like 'copy_module_to'
-    end
-    describe 'should call scp with the correct info, when specifying the modulename' do
-      let(:target){'/etc/puppetlabs/puppet/modules/bogusmodule'}
-      let(:module_parse_name){false}
-      it_should_behave_like 'copy_module_to', {:module_name =>'bogusmodule'}
-    end
-    describe 'should call scp with the correct info, when specifying the target to a different path' do
-      target = '/opt/shared/puppet/modules'
-      let(:target){"#{target}/testmodule"}
-      it_should_behave_like 'copy_module_to', {:target_module_path => target}
-    end
-  end
-
-  describe 'split_author_modulename' do
-    it 'should return a correct modulename' do
-      result =  subject.split_author_modulename('myname-test_43_module')
-      expect(result[:author]).to eq('myname')
-      expect(result[:module]).to eq('test_43_module')
-    end
-  end
-
-  describe 'get_module_name' do
-    it 'should return a has of author and modulename' do
-      expect(subject.get_module_name('myname-test_43_module')).to eq('test_43_module')
-    end
-    it 'should return nil for invalid names' do
-      expect(subject.get_module_name('myname-')).to eq(nil)
-    end
-  end
-
-  describe 'parse_for_modulename' do
-    directory = '/testfilepath/myname-testmodule'
-    it 'should return name from metadata.json' do
-      File.stub(:exists?).with("#{directory}/metadata.json").and_return(true)
-      File.stub(:read).with("#{directory}/metadata.json").and_return(" {\"name\":\"myname-testmodule\"} ")
-      subject.logger.should_receive(:debug).with("Attempting to parse Modulename from metadata.json")
-      subject.logger.should_not_receive(:debug).with('Unable to determine name, returning null')
-      subject.parse_for_modulename(directory).should eq('testmodule')
-    end
-    it 'should return name from Modulefile' do
-      File.stub(:exists?).with("#{directory}/metadata.json").and_return(false)
-      File.stub(:exists?).with("#{directory}/Modulefile").and_return(true)
-      File.stub(:read).with("#{directory}/Modulefile").and_return("name    'myname-testmodule'  \nauthor   'myname'")
-      subject.logger.should_receive(:debug).with("Attempting to parse Modulename from Modulefile")
-      subject.logger.should_not_receive(:debug).with("Unable to determine name, returning null")
-      expect(subject.parse_for_modulename(directory)).to eq('testmodule')
-    end
-  end
-
-  describe 'parse_for_module_root' do
-    directory = '/testfilepath/myname-testmodule'
-    it 'should recersively go up the directory to find the module files' do
-      File.stub(:exists?).with("#{directory}/acceptance/Modulefile").and_return(false)
-      File.stub(:exists?).with("#{directory}/Modulefile").and_return(true)
-      subject.logger.should_not_receive(:debug).with("At root, can't parse for another directory")
-      subject.logger.should_receive(:debug).with("No Modulefile found at #{directory}/acceptance, moving up")
-      expect(subject.parse_for_moduleroot("#{directory}/acceptance")).to eq(directory)
-    end
-    it 'should recersively go up the directory to find the module files' do
-      File.stub(:exists?).and_return(false)
-      subject.logger.should_receive(:debug).with("No Modulefile found at #{directory}, moving up")
-      subject.logger.should_receive(:error).with("At root, can't parse for another directory")
-      expect(subject.parse_for_moduleroot(directory)).to eq(nil)
-    end
-
   end
 end

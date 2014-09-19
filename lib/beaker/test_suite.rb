@@ -155,6 +155,41 @@ module Beaker
         text.gsub(/(\e|\^\[)\[(\d*;)*\d*m/, '')
       end
 
+      # Determine if the provided number falls in the range of accepted xml unicode values
+      # See http://www.w3.org/TR/xml/#charsets for valid for valid character specifications.
+      # @param [Integer] int The number to check against
+      # @return [Boolean] True, if the number corresponds to a valid xml unicode character, otherwise false
+      def is_valid_xml(int)
+        return ( int == 0x9 or
+                 int == 0xA or
+               ( int >= 0x0020 and int <= 0xD7FF ) or
+               ( int >= 0xE000 and int <= 0xFFFD ) or
+               ( int >= 0x100000 and int <= 0x10FFFF )
+        )
+      end
+
+      # Escape invalid XML UTF-8 codes from provided string, see http://www.w3.org/TR/xml/#charsets for valid
+      # character specification
+      # @param [String] string The string to remove invalid codes from
+      def escape_invalid_xml_chars string
+        escaped_string = ""
+        string.chars.each do |i|
+          char_as_codestring = i.unpack("U*").join
+          if is_valid_xml(char_as_codestring.to_i)
+            escaped_string << i
+          else
+            escaped_string << "\\#{char_as_codestring}"
+          end
+        end
+        escaped_string
+      end
+
+      # Remove color codes and invalid XML characters from provided string
+      # @param [String] string The string to format
+      def format_cdata string
+        escape_invalid_xml_chars(strip_color_codes(string))
+      end
+
       #Format and print the {TestSuiteResult} as JUnit XML
       #@param [String] xml_file The full path to print the output to.
       #@param [String] stylesheet The full path to a JUnit XML stylesheet
@@ -178,7 +213,8 @@ module Beaker
             end
           else
             #no existing file, create a new one
-            doc = Nokogiri::XML::Document.new
+            doc = Nokogiri::XML::Document.new()
+            doc.encoding = 'UTF-8'
             pi = Nokogiri::XML::ProcessingInstruction.new(doc, "xml-stylesheet", "type=\"text/xsl\" href=\"#{File.basename(stylesheet)}\"")
             pi.parent = doc
             suites = Nokogiri::XML::Node.new('testsuites', doc)
@@ -217,7 +253,8 @@ module Beaker
               status['type'] =  test.test_status.to_s
               if test.exception then
                 status['message'] = test.exception.to_s.gsub(/\e/, '')
-                status.add_child(status.document.create_cdata(test.exception.backtrace.join('\n')))
+                data = format_cdata(test.exception.backtrace.join('\n'))
+                status.add_child(status.document.create_cdata(data))
               end
               item.add_child(status)
             end
@@ -236,13 +273,15 @@ module Beaker
 
             if test.sublog then
               stdout = Nokogiri::XML::Node.new('system-out', doc)
-              stdout.add_child(stdout.document.create_cdata(strip_color_codes(test.sublog)))
+              data = format_cdata(test.sublog)
+              stdout.add_child(stdout.document.create_cdata(data))
               item.add_child(stdout)
             end
 
-            if test.stderr then
+            if test.last_result and test.last_result.stderr and not test.last_result.stderr.empty? then
               stderr = Nokogiri::XML::Node.new('system-err', doc)
-              stderr.add_child(stderr.document.create_cdata(strip_color_codes(test.stderr)))
+              data = format_cdata(test.last_result.stderr)
+              stderr.add_child(stderr.document.create_cdata(data))
               item.add_child(stderr)
             end
 

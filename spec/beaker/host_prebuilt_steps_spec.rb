@@ -17,7 +17,8 @@ describe Beaker do
                            hosts[1][:roles] = ['master', 'dashboard', 'agent', 'database']
                            hosts[2][:roles] = ['agent']
                            hosts }
-  let( :dummy_class )    { Class.new { include Beaker::HostPrebuiltSteps } }
+  let( :dummy_class )    { Class.new { include Beaker::HostPrebuiltSteps
+                                       include Beaker::DSL::Patterns } }
 
   context 'timesync' do
 
@@ -271,10 +272,9 @@ describe Beaker do
           host.should_receive( :check_for_package ).with( pkg ).once.and_return( false )
           host.should_receive( :install_package ).with( pkg ).once
         end
-        
       end
 
-      subject.validate_host(hosts, logger)
+      subject.validate_host(hosts, options)
 
     end
 
@@ -288,7 +288,7 @@ describe Beaker do
         end
       end
 
-      subject.validate_host(hosts, logger)
+      subject.validate_host(hosts, options)
 
     end
 
@@ -303,7 +303,7 @@ describe Beaker do
 
       end
 
-      subject.validate_host(hosts, logger)
+      subject.validate_host(hosts, options)
 
     end
   end

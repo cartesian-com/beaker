@@ -35,20 +35,23 @@ module Beaker
         }
 
         docker_mount_dir = host.options[:HOSTS][host.name][:docker_mount_modules_dir]
+        docker_mount_to  = host.options[:HOSTS][host.name][:docker_mount_modules_to]
 
         if docker_mount_dir != "" then
           mount_dir = File.expand_path(File.join(Dir.getwd, docker_mount_dir))
-          @logger.debug("Mounting /etc/puppet/modules from Docker host O/S, #{mount_dir}")
+          mount_to  = docker_mount_to.empty? ? '/etc/puppet/modules' : docker_mount_to
+
+          @logger.debug("Mounting #{mount_to} from Docker host O/S, #{mount_dir}")
           create_args.merge!({
             "Volumes" => {
-              "/etc/puppet/modules" => mount_dir
+              mount_to => mount_dir
             },
             "VolumesRW" => {
-              "/etc/puppet/modules" => false
+              mount_to => false
             }
           })
           start_args.merge!({
-            "Binds" => ["#{mount_dir}:/etc/puppet/modules:ro"]
+            "Binds" => ["#{mount_dir}:#{mount_to}:ro"]
           })
         end
 

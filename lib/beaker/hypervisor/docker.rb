@@ -44,14 +44,16 @@ module Beaker
           @logger.debug("Mounting #{mount_to} from Docker host O/S, #{mount_dir}")
           create_args.merge!({
             "Volumes" => {
-              mount_to => mount_dir
+              mount_to => mount_dir,
+              '/lib/modules' => '/lib/modules',
             },
             "VolumesRW" => {
-              mount_to => false
+              mount_to => false,
+              '/lib/modules' => false,
             }
           })
           start_args.merge!({
-            "Binds" => ["#{mount_dir}:#{mount_to}:ro"]
+            "Binds" => ["#{mount_dir}:#{mount_to}:ro", "/lib/modules:/lib/modules:ro"]
           })
         end
 
